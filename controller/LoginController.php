@@ -9,6 +9,7 @@ header("Content-Type: application/json; charset=UTF-8");
 session_start();
 
 require_once(ROOT_DIR . "/model/UsuarioModel.php");
+require_once(ROOT_DIR . "/model/AuditoriaModel.php");
 
 $method = $_SERVER['REQUEST_METHOD'];
 $input = json_decode(file_get_contents('php://input'), true);
@@ -52,9 +53,11 @@ function login($input)
     $var = $su->verificarlogin($p_correo_electronico, $p_password);
     if (!empty($var['DATA'])) {
         $_SESSION['login'] = $var['DATA'][0];
+        (new AuditoriaModel())->registrar('login_exitoso', 'seguridad', ['correo' => $p_correo_electronico], (int)$_SESSION['login']['id_usuario']);
         echo json_encode($var);
         exit();
     } else {
+        (new AuditoriaModel())->registrar('login_fallido', 'seguridad', ['correo' => $p_correo_electronico], null);
         echo json_encode([
             'ESTADO' => false,
             'ERROR' => "Usuario o Contraseña no válida."
@@ -78,6 +81,7 @@ function register($input)
     $usuario->bootstrapAcceso();
     $p_contrasena = password_hash($p_contrasena, PASSWORD_BCRYPT);
     $var = $usuario->register($p_nombre, $p_correo_electronico, $p_contrasena, $p_telefono, $p_ci, $p_id_rol);
+    (new AuditoriaModel())->registrar('registro_usuario', 'seguridad', ['correo' => $p_correo_electronico, 'nombre' => $p_nombre]);
     echo json_encode($var);
 }
 

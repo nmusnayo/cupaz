@@ -18,9 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajeExito = !empty($resultado['ESTADO']) ? 'Envío actualizado a ENVIADO y QR de entrega generado.' : '';
         $mensajeError = empty($resultado['ESTADO']) ? ($resultado['ERROR'] ?? 'No se pudo actualizar el envío.') : '';
     } elseif ($accion === 'marcar_entregado') {
-        $resultado = $ventaModel->actualizarEstadoEnvio((int)($_POST['id_envio'] ?? 0), $idVendedor, 'ENTREGADO');
-        $mensajeExito = !empty($resultado['ESTADO']) ? 'Envío actualizado a ENTREGADO.' : '';
-        $mensajeError = empty($resultado['ESTADO']) ? ($resultado['ERROR'] ?? 'No se pudo actualizar el envío.') : '';
+        $mensajeError = 'La entrega debe confirmarla el cliente con el QR generado para el envio.';
     } elseif ($accion === 'generar_qr') {
         $resultado = $entregaQrModel->generarParaPedido((int)($_POST['id_pedido'] ?? 0), $idVendedor);
         $mensajeExito = !empty($resultado['ESTADO']) ? 'QR de entrega generado correctamente.' : '';
@@ -81,6 +79,13 @@ foreach ($qrs as $qr) {
                                 </tr>
                             </thead>
                             <tbody>
+                                <?php if (empty($ventas)): ?>
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted py-4">
+                                            Todavia no tienes ventas registradas.
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
                                 <?php foreach ($ventas as $venta): ?>
                                     <tr>
                                         <td><strong>#<?php echo (int)$venta['id_pedido']; ?></strong></td>
@@ -101,13 +106,7 @@ foreach ($qrs as $qr) {
                                                     </button>
                                                 </form>
                                             <?php elseif (($venta['estado_envio'] ?? '') === 'ENVIADO'): ?>
-                                                <form method="post" style="display:inline-block;">
-                                                    <input type="hidden" name="accion" value="marcar_entregado">
-                                                    <input type="hidden" name="id_envio" value="<?php echo (int)$venta['id_envio']; ?>">
-                                                    <button type="submit" class="btn btn-sm btn-cupaz-outline">
-                                                        <i class="fas fa-check mr-1"></i>Marcar entregado
-                                                    </button>
-                                                </form>
+                                                <span class="helper-text">Esperando confirmacion del cliente con QR.</span>
                                             <?php else: ?>
                                                 <span class="helper-text">Sin acciones pendientes</span>
                                             <?php endif; ?>

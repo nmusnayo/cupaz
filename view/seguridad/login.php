@@ -1,5 +1,6 @@
 <?php
 require_once ROOT_DIR . '/model/UsuarioModel.php';
+require_once ROOT_DIR . '/model/AuditoriaModel.php';
 
 $mensajeError = '';
 $email = '';
@@ -21,10 +22,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             if (!empty($resultado['ESTADO']) && !empty($resultado['DATA'])) {
                 $_SESSION['login'] = $resultado['DATA'][0];
+                (new AuditoriaModel())->registrar('login_exitoso', 'seguridad', ['correo' => $email], (int)$_SESSION['login']['id_usuario']);
                 echo '<script>window.location.href ="' . HTTP_BASE . '/home/";</script>';
                 exit;
             }
 
+            (new AuditoriaModel())->registrar('login_fallido', 'seguridad', ['correo' => $email], null);
             $mensajeError = $resultado['ERROR'] ?? 'Usuario o contraseña no válidos.';
         } catch (Throwable $e) {
             $mensajeError = 'No se pudo iniciar sesión. Verifica la conexión con la base de datos.';

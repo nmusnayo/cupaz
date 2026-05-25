@@ -8,27 +8,70 @@ class DisputaModel extends ModeloBasePDO
     public function __construct()
     {
         parent::__construct();
-        $this->asegurarEsquemaOperativo();
+        try {
+            $this->asegurarEsquemaOperativo();
+        } catch (Exception $e) {
+        }
     }
 
     private function asegurarEsquemaOperativo()
     {
-        if (!$this->enumTieneValor('disputas', 'estado', 'ANULADA')) {
-            $this->_db->exec("ALTER TABLE disputas MODIFY estado ENUM('ABIERTA','EN_REVISION','RESUELTA_CLIENTE','RESUELTA_VENDEDOR','CERRADA','ANULADA') DEFAULT 'ABIERTA'");
+        if (!$this->hasTable('disputas')) {
+            $this->_db->exec("CREATE TABLE IF NOT EXISTS disputas (
+                id_disputa INT AUTO_INCREMENT PRIMARY KEY,
+                id_pedido INT NOT NULL,
+                id_vendedor INT NULL,
+                id_cliente INT NOT NULL,
+                id_admin INT NULL,
+                motivo TEXT NOT NULL,
+                estado VARCHAR(40) DEFAULT 'ABIERTA',
+                resolucion TEXT NULL,
+                fecha_apertura DATETIME DEFAULT CURRENT_TIMESTAMP,
+                fecha_resolucion DATETIME NULL,
+                INDEX idx_disputas_pedido (id_pedido),
+                INDEX idx_disputas_vendedor (id_vendedor),
+                INDEX idx_disputas_cliente (id_cliente),
+                INDEX idx_disputas_estado (estado)
+            )");
+        }
+        try {
+            if ($this->hasColumn('disputas', 'estado') && !$this->enumTieneValor('disputas', 'estado', 'ANULADA')) {
+                $this->_db->exec("ALTER TABLE disputas MODIFY estado ENUM('ABIERTA','EN_REVISION','RESUELTA_CLIENTE','RESUELTA_VENDEDOR','CERRADA','ANULADA') DEFAULT 'ABIERTA'");
+            }
+        } catch (Exception $e) {
         }
         if (!$this->hasColumn('disputas', 'id_vendedor')) {
-            $this->_db->exec("ALTER TABLE disputas ADD id_vendedor INT NULL AFTER id_pedido");
-            $this->schemaCache['disputas:id_vendedor'] = true;
-            $this->_db->exec("UPDATE disputas d
-                              INNER JOIN (
-                                  SELECT id_pedido, MIN(id_vendedor) AS id_vendedor
-                                  FROM detalle_pedidos
-                                  WHERE id_vendedor IS NOT NULL AND id_vendedor > 0
-                                  GROUP BY id_pedido
-                              ) dp ON dp.id_pedido = d.id_pedido
-                              SET d.id_vendedor = dp.id_vendedor
-                              WHERE d.id_vendedor IS NULL OR d.id_vendedor = 0");
+            try {
+                $this->_db->exec("ALTER TABLE disputas ADD id_vendedor INT NULL AFTER id_pedido");
+                $this->schemaCache['disputas:id_vendedor'] = true;
+                if ($this->hasColumn('detalle_pedidos', 'id_vendedor')) {
+                    $this->_db->exec("UPDATE disputas d
+                                      INNER JOIN (
+                                          SELECT id_pedido, MIN(id_vendedor) AS id_vendedor
+                                          FROM detalle_pedidos
+                                          WHERE id_vendedor IS NOT NULL AND id_vendedor > 0
+                                          GROUP BY id_pedido
+                                      ) dp ON dp.id_pedido = d.id_pedido
+                                      SET d.id_vendedor = dp.id_vendedor
+                                      WHERE d.id_vendedor IS NULL OR d.id_vendedor = 0");
+                }
+            } catch (Exception $e) {
+            }
         }
+    }
+
+    private function hasTable($table)
+    {
+        $key = 'table:' . $table;
+        if (!array_key_exists($key, $this->schemaCache)) {
+            $stmt = $this->_db->prepare("SELECT COUNT(*) FROM information_schema.TABLES
+                                         WHERE TABLE_SCHEMA = DATABASE()
+                                           AND TABLE_NAME = :table_name");
+            $stmt->bindValue(':table_name', $table, PDO::PARAM_STR);
+            $stmt->execute();
+            $this->schemaCache[$key] = ((int)$stmt->fetchColumn() > 0);
+        }
+        return $this->schemaCache[$key];
     }
 
     private function enumTieneValor($table, $column, $value)
@@ -63,15 +106,25 @@ class DisputaModel extends ModeloBasePDO
 
     public function listarTodas()
     {
+        $usaVendedor = $this->hasColumn('disputas', 'id_vendedor');
+        $selectVendedor = $usaVendedor ? "d.id_vendedor" : "COALESCE(dp.id_vendedor, 0) AS id_vendedor";
+        $joinVendedor = $usaVendedor
+            ? "LEFT JOIN usuarios ven ON ven.id_usuario = d.id_vendedor"
+            : "LEFT JOIN (
+                    SELECT id_pedido, MIN(id_vendedor) AS id_vendedor
+                    FROM detalle_pedidos
+                    GROUP BY id_pedido
+               ) dp ON dp.id_pedido = d.id_pedido
+               LEFT JOIN usuarios ven ON ven.id_usuario = dp.id_vendedor";
         $sql = "SELECT d.id_disputa, d.id_pedido, d.id_cliente, d.id_admin,
-                       d.id_vendedor,
+                       {$selectVendedor},
                        d.motivo, d.estado, d.resolucion, d.fecha_apertura, d.fecha_resolucion,
                        cli.nombre AS cliente, ven.nombre AS vendedor, adm.nombre AS admin,
                        p.monto_total, p.estado AS estado_pedido
                 FROM disputas d
                 INNER JOIN pedidos p ON p.id_pedido = d.id_pedido
                 INNER JOIN usuarios cli ON cli.id_usuario = d.id_cliente
-                INNER JOIN usuarios ven ON ven.id_usuario = d.id_vendedor
+                {$joinVendedor}
                 LEFT JOIN usuarios adm ON adm.id_usuario = d.id_admin
                 ORDER BY d.fecha_apertura DESC, d.id_disputa DESC";
         return parent::gselect($sql, []);
@@ -79,15 +132,25 @@ class DisputaModel extends ModeloBasePDO
 
     public function listarPorCliente($idCliente)
     {
+        $usaVendedor = $this->hasColumn('disputas', 'id_vendedor');
+        $selectVendedor = $usaVendedor ? "d.id_vendedor" : "COALESCE(dp.id_vendedor, 0) AS id_vendedor";
+        $joinVendedor = $usaVendedor
+            ? "LEFT JOIN usuarios ven ON ven.id_usuario = d.id_vendedor"
+            : "LEFT JOIN (
+                    SELECT id_pedido, MIN(id_vendedor) AS id_vendedor
+                    FROM detalle_pedidos
+                    GROUP BY id_pedido
+               ) dp ON dp.id_pedido = d.id_pedido
+               LEFT JOIN usuarios ven ON ven.id_usuario = dp.id_vendedor";
         $sql = "SELECT d.id_disputa, d.id_pedido, d.id_cliente, d.id_admin,
-                       d.id_vendedor,
+                       {$selectVendedor},
                        d.motivo, d.estado, d.resolucion, d.fecha_apertura, d.fecha_resolucion,
                        cli.nombre AS cliente, ven.nombre AS vendedor, adm.nombre AS admin,
                        p.estado AS estado_pedido
                 FROM disputas d
                 INNER JOIN pedidos p ON p.id_pedido = d.id_pedido
                 INNER JOIN usuarios cli ON cli.id_usuario = d.id_cliente
-                INNER JOIN usuarios ven ON ven.id_usuario = d.id_vendedor
+                {$joinVendedor}
                 LEFT JOIN usuarios adm ON adm.id_usuario = d.id_admin
                 WHERE d.id_cliente = :id_cliente
                 ORDER BY d.fecha_apertura DESC, d.id_disputa DESC";
@@ -98,17 +161,28 @@ class DisputaModel extends ModeloBasePDO
 
     public function listarPorVendedor($idVendedor)
     {
+        $usaVendedor = $this->hasColumn('disputas', 'id_vendedor');
+        $selectVendedor = $usaVendedor ? "d.id_vendedor" : "COALESCE(dp.id_vendedor, 0) AS id_vendedor";
+        $joinVendedor = $usaVendedor
+            ? "LEFT JOIN usuarios ven ON ven.id_usuario = d.id_vendedor"
+            : "LEFT JOIN (
+                    SELECT id_pedido, MIN(id_vendedor) AS id_vendedor
+                    FROM detalle_pedidos
+                    GROUP BY id_pedido
+               ) dp ON dp.id_pedido = d.id_pedido
+               LEFT JOIN usuarios ven ON ven.id_usuario = dp.id_vendedor";
+        $whereVendedor = $usaVendedor ? "d.id_vendedor = :id_vendedor" : "dp.id_vendedor = :id_vendedor";
         $sql = "SELECT d.id_disputa, d.id_pedido, d.id_cliente, d.id_admin,
-                       d.id_vendedor,
+                       {$selectVendedor},
                        d.motivo, d.estado, d.resolucion, d.fecha_apertura, d.fecha_resolucion,
                        cli.nombre AS cliente, ven.nombre AS vendedor, adm.nombre AS admin,
                        p.estado AS estado_pedido
                 FROM disputas d
                 INNER JOIN pedidos p ON p.id_pedido = d.id_pedido
                 INNER JOIN usuarios cli ON cli.id_usuario = d.id_cliente
-                INNER JOIN usuarios ven ON ven.id_usuario = d.id_vendedor
+                {$joinVendedor}
                 LEFT JOIN usuarios adm ON adm.id_usuario = d.id_admin
-                WHERE d.id_vendedor = :id_vendedor
+                WHERE {$whereVendedor}
                 ORDER BY d.fecha_apertura DESC, d.id_disputa DESC";
         $param = [];
         array_push($param, [':id_vendedor', $idVendedor, PDO::PARAM_INT]);

@@ -97,6 +97,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $productos = $productoModel->listarCatalogo()['DATA'] ?? [];
+$categoriasCatalogo = [];
+foreach ($productos as $productoCategoria) {
+    $idCategoria = (int)($productoCategoria['id_categoria'] ?? 0);
+    $claveCategoria = $idCategoria > 0 ? 'cat-' . $idCategoria : 'sin-categoria';
+    if (!isset($categoriasCatalogo[$claveCategoria])) {
+        $categoriasCatalogo[$claveCategoria] = [
+            'clave' => $claveCategoria,
+            'nombre' => trim($productoCategoria['categoria'] ?? '') !== '' ? $productoCategoria['categoria'] : 'Sin categoria',
+            'total' => 0,
+        ];
+    }
+    $categoriasCatalogo[$claveCategoria]['total']++;
+}
+uasort($categoriasCatalogo, function ($a, $b) {
+    return strcasecmp($a['nombre'], $b['nombre']);
+});
+
+function urlImagenCatalogo($ruta)
+{
+    $ruta = trim((string)$ruta);
+    if ($ruta === '') {
+        return '';
+    }
+    if (preg_match('#^https?://#i', $ruta)) {
+        return $ruta;
+    }
+    return HTTP_BASE . '/' . ltrim($ruta, '/');
+}
 
 // Serializar carrito para JS — forzar tipos numéricos para evitar el error toFixed
 $carritoJs = array_values(array_map(function($item) {
@@ -105,7 +133,7 @@ $carritoJs = array_values(array_map(function($item) {
         'nombre'      => (string)$item['nombre'],
         'precio'      => (float)$item['precio'],
         'stock'       => (int)$item['stock'],
-        'imagen'      => (string)($item['imagen'] ?? ''),
+        'imagen'      => urlImagenCatalogo($item['imagen'] ?? ''),
         'vendedor'    => (string)($item['vendedor'] ?? ''),
         'cantidad'    => (int)$item['cantidad'],
     ];
@@ -121,11 +149,10 @@ foreach ($productos as $p) {
         'descripcion' => (string)($p['descripcion'] ?? ''),
         'precio'      => (float)$p['precio'],
         'stock'       => (int)$p['stock'],
-        'imagen'      => !empty($p['imagen_principal'])
-                            ? (HTTP_BASE . '/' . ltrim($p['imagen_principal'], '/'))
-                            : '',
+        'imagen'      => urlImagenCatalogo($p['imagen_principal'] ?? ''),
         'vendedor'    => (string)($p['vendedor'] ?? '—'),
         'categoria'   => trim(($p['categoria'] ?? '') . (!empty($p['subcategoria']) ? ' / ' . $p['subcategoria'] : ''), ' /'),
+        'categoria_id'=> (int)($p['id_categoria'] ?? 0),
     ];
 }
 ?>
@@ -137,6 +164,70 @@ foreach ($productos as $p) {
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 20px;
     margin-top: 20px;
+}
+.catalog-tabs-wrap {
+    margin-top: 4px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: #fff;
+    border: 1px solid var(--cupaz-border);
+    box-shadow: 0 12px 28px rgba(28, 62, 67, 0.05);
+}
+.catalog-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.catalog-tab {
+    border: 1px solid rgba(31, 111, 120, 0.18);
+    background: #fff;
+    color: var(--cupaz-primary-dark);
+    border-radius: 999px;
+    min-height: 40px;
+    padding: 8px 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .16s, color .16s, border-color .16s, box-shadow .16s;
+}
+.catalog-tab:hover {
+    background: var(--cupaz-primary-soft);
+    color: var(--cupaz-primary-dark);
+}
+.catalog-tab.active {
+    background: linear-gradient(135deg, var(--cupaz-primary) 0%, #2d8e98 100%);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 10px 22px rgba(31, 111, 120, 0.16);
+}
+.catalog-tab-count {
+    min-width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    background: rgba(31, 111, 120, 0.1);
+    color: var(--cupaz-primary-dark);
+    font-size: 12px;
+}
+.catalog-tab.active .catalog-tab-count {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+.catalog-empty-filter {
+    display: none;
+    margin-top: 20px;
+    padding: 28px;
+    border: 1px dashed var(--cupaz-border);
+    border-radius: 18px;
+    background: #fff;
+    color: var(--cupaz-muted);
+    text-align: center;
 }
 .catalog-card {
     background: #fff;
@@ -381,9 +472,30 @@ foreach ($productos as $p) {
                     </div>
                 </div>
 
+                <div class="catalog-tabs-wrap">
+                    <div class="catalog-tabs" role="tablist" aria-label="Categorias del catalogo">
+                        <button type="button" class="catalog-tab active" data-category-filter="todos" onclick="filtrarCatalogo('todos', this)">
+                            <i class="fas fa-border-all"></i>
+                            <span>Todos</span>
+                            <span class="catalog-tab-count"><?php echo count($productos); ?></span>
+                        </button>
+                        <?php foreach ($categoriasCatalogo as $categoriaTab): ?>
+                            <button type="button" class="catalog-tab" data-category-filter="<?php echo htmlspecialchars($categoriaTab['clave']); ?>" onclick="filtrarCatalogo('<?php echo htmlspecialchars($categoriaTab['clave']); ?>', this)">
+                                <i class="fas fa-tag"></i>
+                                <span><?php echo htmlspecialchars($categoriaTab['nombre']); ?></span>
+                                <span class="catalog-tab-count"><?php echo (int)$categoriaTab['total']; ?></span>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
                 <div class="catalog-grid">
                     <?php foreach ($productos as $p): ?>
-                        <div class="catalog-card" onclick="abrirDetalle(<?php echo (int)$p['id_producto']; ?>)">
+                        <?php
+                        $idCategoriaCard = (int)($p['id_categoria'] ?? 0);
+                        $claveCategoriaCard = $idCategoriaCard > 0 ? 'cat-' . $idCategoriaCard : 'sin-categoria';
+                        ?>
+                        <div class="catalog-card" data-category="<?php echo htmlspecialchars($claveCategoriaCard); ?>" onclick="abrirDetalle(<?php echo (int)$p['id_producto']; ?>)">
                             <?php if (!empty($p['imagen_principal'])): ?>
                                 <img class="catalog-card-img"
                                      src="<?php echo HTTP_BASE . '/' . ltrim($p['imagen_principal'], '/'); ?>"
@@ -401,6 +513,9 @@ foreach ($productos as $p) {
                             </button>
                         </div>
                     <?php endforeach; ?>
+                </div>
+                <div class="catalog-empty-filter" id="catalogEmptyFilter">
+                    <i class="fas fa-filter mr-2"></i>No hay productos disponibles en esta categoria.
                 </div>
 
             </div>
@@ -706,6 +821,29 @@ function escapeHtml(str) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+function filtrarCatalogo(categoria, boton) {
+    const cards = document.querySelectorAll('.catalog-card[data-category]');
+    const empty = document.getElementById('catalogEmptyFilter');
+    let visibles = 0;
+
+    document.querySelectorAll('.catalog-tab').forEach(tab => tab.classList.remove('active'));
+    if (boton) {
+        boton.classList.add('active');
+    }
+
+    cards.forEach(card => {
+        const mostrar = categoria === 'todos' || card.dataset.category === categoria;
+        card.style.display = mostrar ? '' : 'none';
+        if (mostrar) {
+            visibles++;
+        }
+    });
+
+    if (empty) {
+        empty.style.display = visibles === 0 ? 'block' : 'none';
+    }
+}
+
 actualizarBadge();
 </script>
 

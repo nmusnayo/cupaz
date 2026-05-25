@@ -3,15 +3,26 @@ require_once ROOT_DIR . '/model/DisputaModel.php';
 require_once ROOT_DIR . '/model/PedidoModel.php';
 require_once ROOT_DIR . '/model/PagoModel.php';
 
-$disputaModel = new DisputaModel();
-$pedidoModel = new PedidoModel();
-$pagoModel = new PagoModel();
+$disputaModel = null;
+$pedidoModel = null;
+$pagoModel = null;
 $rolActual = strtoupper($_SESSION['login']['rol'] ?? '');
 $idUsuario = (int)($_SESSION['login']['id_usuario'] ?? 0);
 $mensajeError = '';
 $mensajeExito = '';
+$disputas = [];
+$pedidosCliente = [];
+$pagosPorPedido = [];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+try {
+    $disputaModel = new DisputaModel();
+    $pedidoModel = new PedidoModel();
+    $pagoModel = new PagoModel();
+} catch (Exception $e) {
+    $mensajeError = 'No se pudo iniciar el modulo de disputas: ' . $e->getMessage();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $disputaModel !== null) {
     $accion = $_POST['accion'] ?? '';
 
     if ($accion === 'crear_disputa') {
@@ -55,21 +66,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-if ($rolActual === 'ADMIN') {
-    $disputas = $disputaModel->listarTodas()['DATA'] ?? [];
-} elseif ($rolActual === 'VENDEDOR') {
-    $disputas = $disputaModel->listarPorVendedor($idUsuario)['DATA'] ?? [];
-} else {
-    $disputas = $disputaModel->listarPorCliente($idUsuario)['DATA'] ?? [];
+if ($disputaModel !== null) {
+    if ($rolActual === 'ADMIN') {
+        $resultadoDisputas = $disputaModel->listarTodas();
+    } elseif ($rolActual === 'VENDEDOR') {
+        $resultadoDisputas = $disputaModel->listarPorVendedor($idUsuario);
+    } else {
+        $resultadoDisputas = $disputaModel->listarPorCliente($idUsuario);
+    }
+    if (!empty($resultadoDisputas['ESTADO'])) {
+        $disputas = $resultadoDisputas['DATA'] ?? [];
+    } else {
+        $mensajeError = $resultadoDisputas['ERROR'] ?? 'No se pudieron cargar las disputas.';
+    }
 }
 
-$pedidosCliente = $rolActual === 'CLIENTE'
-    ? ($pedidoModel->listarPorCliente($idUsuario)['DATA'] ?? [])
-    : [];
-
-$pagosPorPedido = [];
-foreach ($pedidosCliente as $pedido) {
-    $pagosPorPedido[(int)$pedido['id_pedido']] = $pagoModel->listarPorPedido((int)$pedido['id_pedido'])['DATA'] ?? [];
+if ($rolActual === 'CLIENTE' && $pedidoModel !== null && $pagoModel !== null) {
+    $resultadoPedidosCliente = $pedidoModel->listarPorCliente($idUsuario);
+    if (!empty($resultadoPedidosCliente['ESTADO'])) {
+        $pedidosCliente = $resultadoPedidosCliente['DATA'] ?? [];
+    }
+    foreach ($pedidosCliente as $pedido) {
+        $pagosPorPedido[(int)$pedido['id_pedido']] = $pagoModel->listarPorPedido((int)$pedido['id_pedido'])['DATA'] ?? [];
+    }
 }
 ?>
 <?php require ROOT_VIEW . '/template/header.php'; ?>

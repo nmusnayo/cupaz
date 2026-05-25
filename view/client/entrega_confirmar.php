@@ -22,7 +22,6 @@ function guardarEvidenciaRecepcion($file)
         'image/jpeg' => 'jpg',
         'image/png' => 'png',
         'image/webp' => 'webp',
-        'application/pdf' => 'pdf',
     ];
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($file['tmp_name']);
@@ -56,10 +55,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confi
         $mensajeError = 'Solo un cliente puede confirmar la recepción de este pedido.';
     } else {
         $evidencia = guardarEvidenciaRecepcion($_FILES['evidencia_recepcion'] ?? []);
+        $payloadQrRecepcion = trim($_POST['qr_payload_detectado'] ?? '');
         if ($evidencia === null) {
-            $resultado = ['ESTADO' => false, 'ERROR' => 'Debes subir una evidencia válida en imagen o PDF.'];
+            $resultado = ['ESTADO' => false, 'ERROR' => 'Debes subir una imagen valida del QR recibido.'];
         } else {
-            $resultado = $entregaModel->confirmarEntregaPorToken($token, $idUsuario, $evidencia);
+            $resultado = $entregaModel->confirmarEntregaPorToken($token, $idUsuario, $evidencia, $payloadQrRecepcion);
         }
         if (!empty($resultado['ESTADO'])) {
             $mensajeExito = 'Entrega confirmada correctamente. El pago fue liberado y se registró la evidencia.';
@@ -113,13 +113,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confi
 
                             <?php if (($entrega['estado'] ?? '') !== 'CONFIRMADO'): ?>
                                 <form method="post" enctype="multipart/form-data" class="mt-4 cupaz-form">
+                                    <?php echo function_exists('csrf_field') ? csrf_field() : ''; ?>
                                     <input type="hidden" name="accion" value="confirmar_entrega_qr">
                                     <input type="hidden" name="token" value="<?php echo htmlspecialchars($token); ?>">
+                                    <input type="hidden" name="qr_payload_detectado" id="qrPayloadDetectado" value="">
                                     <div class="form-group">
-                                        <label>Evidencia de recepción</label>
-                                        <input type="file" name="evidencia_recepcion" class="form-control" accept="image/*,.pdf" required>
+                                        <label>Foto del QR recibido</label>
+                                        <input type="file" name="evidencia_recepcion" id="evidenciaRecepcionQr" class="form-control" accept="image/*" required>
+                                        <small id="estadoLecturaQr" class="form-text text-muted">Sube una foto clara del QR que venia con el envio.</small>
                                     </div>
-                                    <button type="submit" class="btn btn-cupaz-primary">
+                                    <button type="submit" id="btnConfirmarEntregaQr" class="btn btn-cupaz-primary" disabled>
                                         <i class="fas fa-check-circle mr-2"></i>Confirmar recepción del pedido
                                     </button>
                                 </form>
@@ -133,6 +136,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confi
         </div>
     </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+(function () {
+    const input = document.getElementById('evidenciaRecepcionQr');
+    const hidden = document.getElementById('qrPayloadDetectado');
+    const estado = document.getElementById('estadoLecturaQr');
+    const boton = document.getElementById('btnConfirmarEntregaQr');
+    const tokenEsperado = <?php echo json_encode($token); ?>;
+
+    function tokenDesdePayload(payload) {
+        payload = (payload || '').trim();
+        try {
+            const url = new URL(payload);
+            return (url.searchParams.get('token') || '').trim();
+        } catch (e) {
+            return payload;
+        }
+    }
+
+    function limpiar(mensaje, clase) {
+        if (hidden) hidden.value = '';
+        if (boton) boton.disabled = true;
+        if (estado) {
+            estado.textContent = mensaje;
+            estado.className = 'form-text ' + clase;
+        }
+    }
+
+    if (!input || !hidden || !estado || !boton) {
+        return;
+    }
+
+    input.addEventListener('change', function () {
+        const file = input.files && input.files[0] ? input.files[0] : null;
+        limpiar('Leyendo el QR de la imagen...', 'text-muted');
+
+        if (!file) {
+            limpiar('Sube una foto clara del QR que venia con el envio.', 'text-muted');
+            return;
+        }
+        if (!window.jsQR) {
+            limpiar('No se cargo el lector de QR. Revisa tu conexion e intenta de nuevo.', 'text-danger');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function (event) {
+            const img = new Image();
+            img.onload = function () {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const lectura = jsQR(imageData.data, imageData.width, imageData.height);
+                if (!lectura || !lectura.data) {
+                    limpiar('No pude leer un QR en esa imagen. Sube una foto mas clara.', 'text-danger');
+                    return;
+                }
+
+                const tokenLeido = tokenDesdePayload(lectura.data);
+                if (tokenLeido !== tokenEsperado) {
+                    limpiar('El QR de la imagen no coincide con el envio de este pedido.', 'text-danger');
+                    return;
+                }
+
+                hidden.value = lectura.data;
+                boton.disabled = false;
+                estado.textContent = 'QR verificado. Ya puedes confirmar la entrega.';
+                estado.className = 'form-text text-success';
+            };
+            img.onerror = function () {
+                limpiar('No se pudo procesar la imagen cargada.', 'text-danger');
+            };
+            img.src = event.target.result;
+        };
+        reader.onerror = function () {
+            limpiar('No se pudo leer el archivo cargado.', 'text-danger');
+        };
+        reader.readAsDataURL(file);
+    });
+})();
+</script>
 <?php require ROOT_VIEW . '/template/footer.php'; ?>
 <?php else: ?>
 <!DOCTYPE html>

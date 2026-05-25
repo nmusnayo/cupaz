@@ -138,7 +138,23 @@ class EntregaQrModel extends ModeloBasePDO
         return parent::gupdate($sql, $param);
     }
 
-    public function confirmarEntregaPorToken($token, $idUsuario, $evidenciaRecepcion = '')
+    private function extraerTokenDesdeQr($payloadQr)
+    {
+        $payloadQr = trim((string)$payloadQr);
+        if ($payloadQr === '') {
+            return '';
+        }
+
+        $partes = parse_url($payloadQr);
+        if (!empty($partes['query'])) {
+            parse_str($partes['query'], $query);
+            return trim((string)($query['token'] ?? ''));
+        }
+
+        return $payloadQr;
+    }
+
+    public function confirmarEntregaPorToken($token, $idUsuario, $evidenciaRecepcion = '', $payloadQrRecepcion = '')
     {
         $array = [];
         try {
@@ -165,6 +181,13 @@ class EntregaQrModel extends ModeloBasePDO
             }
             if (trim($evidenciaRecepcion) === '') {
                 throw new PDOException('Debes cargar una evidencia de recepción para liberar el pago.');
+            }
+            $tokenQrRecepcion = $this->extraerTokenDesdeQr($payloadQrRecepcion);
+            if ($tokenQrRecepcion === '') {
+                throw new PDOException('No se pudo leer el QR de la imagen cargada.');
+            }
+            if (!hash_equals((string)$token, $tokenQrRecepcion)) {
+                throw new PDOException('El QR cargado no coincide con el QR de envio generado por el vendedor.');
             }
 
             $stmt = $this->_db->prepare("UPDATE pagos

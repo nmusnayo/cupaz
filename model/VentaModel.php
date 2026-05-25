@@ -129,7 +129,6 @@ class VentaModel extends ModeloBasePDO
                     LEFT JOIN envios e ON e.id_pedido = dp.id_pedido AND e.id_vendedor = dp.id_vendedor
                     LEFT JOIN productos pr ON pr.id_producto = dp.id_producto
                     WHERE dp.id_vendedor = :id_vendedor
-                      AND p.estado NOT IN ('PENDIENTE_PAGO', 'PAGO_EN_VERIFICACION')
                     GROUP BY e.id_envio, p.id_pedido, dp.id_vendedor, e.estado, e.fecha_envio, e.fecha_entrega,
                              p.estado, p.monto_total, p.direccion_entrega, p.fecha_pedido, c.nombre
                     ORDER BY p.fecha_pedido DESC, p.id_pedido DESC";
@@ -160,7 +159,6 @@ class VentaModel extends ModeloBasePDO
                 LEFT JOIN detalle_pedidos dp ON dp.id_pedido = p.id_pedido
                 LEFT JOIN productos pr ON pr.id_producto = dp.id_producto
                 WHERE dp.id_vendedor = :id_vendedor
-                  AND p.estado NOT IN ('PENDIENTE_PAGO', 'PAGO_EN_VERIFICACION')
                 GROUP BY p.id_pedido, dp.id_vendedor, p.estado, p.fecha_envio, p.fecha_entrega,
                          p.monto_total, p.direccion_entrega, p.fecha_pedido, c.nombre
                 ORDER BY p.fecha_pedido DESC, p.id_pedido DESC";

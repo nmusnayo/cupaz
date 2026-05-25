@@ -310,13 +310,33 @@ CREATE TABLE IF NOT EXISTS liquidaciones_vendedor (
 );
 
 -- ============================================================
--- 13. INDICES (RENDIMIENTO)
+-- 16. AUDITORIA DEL SISTEMA
+-- ============================================================
+CREATE TABLE IF NOT EXISTS auditoria (
+    id_auditoria INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NULL,
+    accion VARCHAR(80) NOT NULL,
+    modulo VARCHAR(80) NOT NULL,
+    detalle TEXT NULL,
+    ip VARCHAR(45) NULL,
+    user_agent VARCHAR(255) NULL,
+    metodo VARCHAR(10) NULL,
+    ruta VARCHAR(255) NULL,
+    fecha_evento DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+);
+
+-- ============================================================
+-- 17. INDICES (RENDIMIENTO)
 -- ============================================================
 CREATE INDEX idx_usuario_correo ON usuarios(correo);
 CREATE INDEX idx_producto_categoria ON productos(id_categoria);
 CREATE INDEX idx_pedido_cliente ON pedidos(id_cliente);
 CREATE INDEX idx_detalle_pedido ON detalle_pedidos(id_pedido);
 CREATE INDEX idx_pago_pedido ON pagos(id_pedido);
+CREATE INDEX idx_auditoria_usuario ON auditoria(id_usuario);
+CREATE INDEX idx_auditoria_modulo ON auditoria(modulo);
+CREATE INDEX idx_auditoria_fecha ON auditoria(fecha_evento);
 
 -- ============================================================
 -- DATOS INICIALES

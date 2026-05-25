@@ -11,6 +11,7 @@ class ProductoModel extends ModeloBasePDO
     public function listarPorVendedor($idVendedor)
     {
         $sql = "SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.estado, p.imagen_principal,
+                       p.id_categoria,
                        c.nombre AS categoria, s.nombre AS subcategoria,
                        u.nombre AS vendedor, u.id_usuario AS id_vendedor
                 FROM productos p
@@ -27,6 +28,7 @@ class ProductoModel extends ModeloBasePDO
     public function listarTodos()
     {
         $sql = "SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.estado, p.imagen_principal,
+                       p.id_categoria,
                        c.nombre AS categoria, s.nombre AS subcategoria,
                        u.nombre AS vendedor, u.id_usuario AS id_vendedor
                 FROM productos p
@@ -40,6 +42,7 @@ class ProductoModel extends ModeloBasePDO
     public function listarCatalogo()
     {
         $sql = "SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.estado, p.imagen_principal,
+                       p.id_categoria,
                        c.nombre AS categoria, s.nombre AS subcategoria,
                        u.nombre AS vendedor, u.id_usuario AS id_vendedor
                 FROM productos p

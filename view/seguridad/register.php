@@ -1,5 +1,6 @@
 <?php
 require_once ROOT_DIR . '/model/UsuarioModel.php';
+require_once ROOT_DIR . '/model/AuditoriaModel.php';
 
 $mensajeError = '';
 $mensajeExito = '';
@@ -58,9 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 );
 
                 if (!empty($resultado['ESTADO'])) {
+                    (new AuditoriaModel())->registrar('registro_usuario', 'seguridad', ['correo' => $formData['email'], 'nombre' => $formData['nombre'], 'rol' => $formData['rol']], null);
                     $login = $usuarioModel->verificarlogin($formData['email'], $password);
                     if (!empty($login['DATA'])) {
                         $_SESSION['login'] = $login['DATA'][0];
+                        (new AuditoriaModel())->registrar('login_exitoso', 'seguridad', ['correo' => $formData['email']], (int)$_SESSION['login']['id_usuario']);
                         echo '<script>window.location.href ="' . HTTP_BASE . '/home/";</script>';
                         exit;
                     }

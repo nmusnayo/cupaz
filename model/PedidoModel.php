@@ -26,6 +26,10 @@ class PedidoModel extends ModeloBasePDO
         $this->asegurarEstadosPago();
         $this->asegurarComprobantesPago();
         $this->asegurarEvidencias();
+        try {
+            $this->asegurarEntregasQr();
+        } catch (Throwable $e) {
+        }
         if (!$this->hasTable('envios')) {
             $this->_db->exec("CREATE TABLE IF NOT EXISTS envios (
                 id_envio INT AUTO_INCREMENT PRIMARY KEY,
@@ -106,6 +110,22 @@ class PedidoModel extends ModeloBasePDO
             url_archivo VARCHAR(255) NOT NULL,
             descripcion TEXT,
             fecha_subida DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
+    }
+
+    private function asegurarEntregasQr()
+    {
+        $this->_db->exec("CREATE TABLE IF NOT EXISTS entregas_qr (
+            id_entrega_qr INT AUTO_INCREMENT PRIMARY KEY,
+            id_pedido INT NOT NULL,
+            id_vendedor INT NOT NULL,
+            token VARCHAR(120) NOT NULL UNIQUE,
+            estado ENUM('GENERADO','ESCANEADO','CONFIRMADO','ANULADO') DEFAULT 'GENERADO',
+            fecha_generacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fecha_escaneo DATETIME NULL,
+            fecha_confirmacion DATETIME NULL,
+            INDEX idx_entregas_qr_pedido (id_pedido),
+            INDEX idx_entregas_qr_vendedor (id_vendedor)
         )");
     }
 
@@ -409,6 +429,16 @@ class PedidoModel extends ModeloBasePDO
             if (!in_array($pedido['estado'], ['PAGO_RETENIDO', 'ENVIADO', 'ENTREGADO'], true)) {
                 throw new PDOException('Este pedido aún no puede confirmarse como recibido.');
             }
+            if ($this->hasTable('entregas_qr')) {
+                $stmt = $this->_db->prepare("SELECT COUNT(*)
+                                             FROM entregas_qr
+                                             WHERE id_pedido = :id_pedido");
+                $stmt->bindValue(':id_pedido', $idPedido, PDO::PARAM_INT);
+                $stmt->execute();
+                if ((int)$stmt->fetchColumn() > 0) {
+                    throw new PDOException('Este pedido debe confirmarse escaneando el QR de entrega del vendedor.');
+                }
+            }
             if (trim($evidenciaRecepcion) === '') {
                 throw new PDOException('Debes cargar una evidencia de recepción para liberar el pago.');
             }
@@ -476,6 +506,13 @@ class PedidoModel extends ModeloBasePDO
     public function listarPorCliente($idCliente)
     {
         $usaDetalleConVendedor = $this->hasColumn('detalle_pedidos', 'id_vendedor');
+        $usaEntregasQr = $this->hasTable('entregas_qr');
+        $selectQr = $usaEntregasQr
+            ? ", MAX(eq.token) AS token_qr_entrega,
+                       MAX(eq.estado) AS estado_qr_entrega"
+            : ", '' AS token_qr_entrega,
+                       '' AS estado_qr_entrega";
+        $joinQr = $usaEntregasQr ? "LEFT JOIN entregas_qr eq ON eq.id_pedido = p.id_pedido" : "";
         $sql = "SELECT p.id_pedido,
                        p.estado,
                        p.monto_total,
@@ -489,10 +526,12 @@ class PedidoModel extends ModeloBasePDO
                        COALESCE(MAX(pagos_resumen.total_retenido), 0) AS total_retenido,
                        COALESCE(MAX(pagos_resumen.total_liberado), 0) AS total_liberado,
                        COALESCE(MAX(pagos_resumen.total_por_verificar), 0) AS total_por_verificar
+                       {$selectQr}
                 FROM pedidos p
                 LEFT JOIN detalle_pedidos dp ON dp.id_pedido = p.id_pedido
                 LEFT JOIN productos pr ON pr.id_producto = dp.id_producto
                 LEFT JOIN usuarios v ON v.id_usuario = dp.id_vendedor
+                {$joinQr}
                 LEFT JOIN (
                     SELECT id_pedido,
                            SUM(CASE WHEN estado = 'RETENIDO' THEN monto ELSE 0 END) AS total_retenido,
@@ -506,10 +545,89 @@ class PedidoModel extends ModeloBasePDO
                 ORDER BY p.fecha_pedido DESC";
         $param = [];
         array_push($param, [':id_cliente', $idCliente, PDO::PARAM_INT]);
-        return parent::gselect($sql, $param);
+        $resultado = parent::gselect($sql, $param);
+        if (!empty($resultado['ESTADO'])) {
+            return $resultado;
+        }
+        return $this->listarPorClienteBasico($idCliente);
     }
 
     public function listarTodos()
+    {
+        $usaDetalleConVendedor = $this->hasColumn('detalle_pedidos', 'id_vendedor');
+        $usaEntregasQr = $this->hasTable('entregas_qr');
+        $usaEvidencias = $this->hasTable('evidencias');
+        $selectQr = $usaEntregasQr
+            ? ", MAX(eq.estado) AS estado_qr_entrega,
+                       MAX(CASE WHEN eq.estado = 'CONFIRMADO' THEN 1 ELSE 0 END) AS qr_confirmado,
+                       MAX(CASE WHEN eq.estado = 'CONFIRMADO' THEN eq.fecha_confirmacion ELSE NULL END) AS fecha_verificacion_qr"
+            : ", '' AS estado_qr_entrega,
+                       0 AS qr_confirmado,
+                       NULL AS fecha_verificacion_qr";
+        $selectEvidencias = $usaEvidencias
+            ? ", MAX(CASE WHEN ev.tipo = 'RECEPCION' THEN ev.url_archivo ELSE NULL END) AS evidencia_recepcion,
+                       MAX(CASE WHEN ev.tipo = 'RECEPCION' AND ev.descripcion LIKE '%QR%' THEN ev.url_archivo ELSE NULL END) AS evidencia_recepcion_qr"
+            : ", '' AS evidencia_recepcion,
+                       '' AS evidencia_recepcion_qr";
+        $joinQr = $usaEntregasQr ? "LEFT JOIN entregas_qr eq ON eq.id_pedido = p.id_pedido" : "";
+        $joinEvidencias = $usaEvidencias ? "LEFT JOIN evidencias ev ON ev.id_pedido = p.id_pedido" : "";
+        $sql = "SELECT p.id_pedido,
+                       p.estado,
+                       p.monto_total,
+                       p.direccion_entrega,
+                       p.fecha_pedido,
+                       c.nombre AS cliente,
+                       " . ($usaDetalleConVendedor
+                            ? "GROUP_CONCAT(DISTINCT v.nombre ORDER BY v.nombre SEPARATOR ', ')"
+                            : "MAX(v.nombre)") . " AS vendedores,
+                       GROUP_CONCAT(DISTINCT pr.nombre ORDER BY pr.nombre SEPARATOR ', ') AS productos
+                       {$selectQr}
+                       {$selectEvidencias}
+                FROM pedidos p
+                INNER JOIN usuarios c ON c.id_usuario = p.id_cliente
+                LEFT JOIN detalle_pedidos dp ON dp.id_pedido = p.id_pedido
+                LEFT JOIN usuarios v ON v.id_usuario = dp.id_vendedor
+                LEFT JOIN productos pr ON pr.id_producto = dp.id_producto
+                {$joinQr}
+                {$joinEvidencias}
+                GROUP BY p.id_pedido, p.estado, p.monto_total, p.direccion_entrega, p.fecha_pedido, c.nombre
+                ORDER BY p.fecha_pedido DESC";
+        $resultado = parent::gselect($sql, []);
+        if (!empty($resultado['ESTADO'])) {
+            return $resultado;
+        }
+        return $this->listarTodosBasico();
+    }
+
+    private function listarPorClienteBasico($idCliente)
+    {
+        $usaDetalleConVendedor = $this->hasColumn('detalle_pedidos', 'id_vendedor');
+        $sql = "SELECT p.id_pedido,
+                       p.estado,
+                       p.monto_total,
+                       p.direccion_entrega,
+                       p.notas,
+                       p.fecha_pedido,
+                       GROUP_CONCAT(DISTINCT pr.nombre ORDER BY pr.nombre SEPARATOR ', ') AS productos,
+                       " . ($usaDetalleConVendedor
+                            ? "GROUP_CONCAT(DISTINCT v.nombre ORDER BY v.nombre SEPARATOR ', ')"
+                            : "MAX(v.nombre)") . " AS vendedores,
+                       0 AS total_retenido,
+                       0 AS total_liberado,
+                       0 AS total_por_verificar,
+                       '' AS token_qr_entrega,
+                       '' AS estado_qr_entrega
+                FROM pedidos p
+                LEFT JOIN detalle_pedidos dp ON dp.id_pedido = p.id_pedido
+                LEFT JOIN productos pr ON pr.id_producto = dp.id_producto
+                LEFT JOIN usuarios v ON v.id_usuario = dp.id_vendedor
+                WHERE p.id_cliente = :id_cliente
+                GROUP BY p.id_pedido, p.estado, p.monto_total, p.direccion_entrega, p.notas, p.fecha_pedido
+                ORDER BY p.fecha_pedido DESC";
+        return parent::gselect($sql, [[':id_cliente', $idCliente, PDO::PARAM_INT]]);
+    }
+
+    private function listarTodosBasico()
     {
         $usaDetalleConVendedor = $this->hasColumn('detalle_pedidos', 'id_vendedor');
         $sql = "SELECT p.id_pedido,
@@ -521,7 +639,12 @@ class PedidoModel extends ModeloBasePDO
                        " . ($usaDetalleConVendedor
                             ? "GROUP_CONCAT(DISTINCT v.nombre ORDER BY v.nombre SEPARATOR ', ')"
                             : "MAX(v.nombre)") . " AS vendedores,
-                       GROUP_CONCAT(DISTINCT pr.nombre ORDER BY pr.nombre SEPARATOR ', ') AS productos
+                       GROUP_CONCAT(DISTINCT pr.nombre ORDER BY pr.nombre SEPARATOR ', ') AS productos,
+                       '' AS estado_qr_entrega,
+                       0 AS qr_confirmado,
+                       NULL AS fecha_verificacion_qr,
+                       '' AS evidencia_recepcion,
+                       '' AS evidencia_recepcion_qr
                 FROM pedidos p
                 INNER JOIN usuarios c ON c.id_usuario = p.id_cliente
                 LEFT JOIN detalle_pedidos dp ON dp.id_pedido = p.id_pedido

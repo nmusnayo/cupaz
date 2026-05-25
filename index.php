@@ -62,6 +62,32 @@ function requiereRoles($rolesPermitidos, $mensaje = 'No tienes permisos para acc
         accesoDenegado($mensaje);
     }
 }
+function registrarAuditoria($accion, $modulo, $detalle = null)
+{
+    try {
+        require_once ROOT_DIR . '/model/AuditoriaModel.php';
+        $auditoria = new AuditoriaModel();
+        $auditoria->registrar($accion, $modulo, $detalle);
+    } catch (Throwable $e) {
+    }
+}
+function auditoriaModuloRuta($route, $subroute)
+{
+    if ($route === '') {
+        return 'home';
+    }
+    return $subroute !== '' ? $route . '/' . $subroute : $route;
+}
+function prepararDetalleAuditoria($route, $subroute, $detalle)
+{
+    $accion = $detalle['accion'] ?? '';
+    if ($route === 'client' && $subroute === 'catalogo' && $accion === 'confirmar_pedido') {
+        $detalle['id_cliente'] = $_SESSION['login']['id_usuario'] ?? '';
+        $detalle['metodo'] = $detalle['metodo'] ?? 'QR_CUPAZ';
+        $detalle['items'] = count($_SESSION['carrito'] ?? []);
+    }
+    return $detalle;
+}
 
 if ($appFolder === '' || (($segments[0] ?? '') === $appFolder)) {
     $rutaPublicaPost = in_array($route, ['login', 'register'], true);
@@ -69,6 +95,9 @@ if ($appFolder === '' || (($segments[0] ?? '') === $appFolder)) {
         http_response_code(403);
         echo 'Solicitud no vÃ¡lida. Recarga la pÃ¡gina e intÃ©ntalo nuevamente.';
         exit;
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$rutaPublicaPost && isset($_SESSION['login'])) {
+        registrarAuditoria($_POST['accion'] ?? 'POST', auditoriaModuloRuta($route, $subroute), prepararDetalleAuditoria($route, $subroute, $_POST));
     }
 
     switch ($route) {
@@ -79,6 +108,7 @@ if ($appFolder === '' || (($segments[0] ?? '') === $appFolder)) {
             require ROOT_VIEW . '/seguridad/register.php';
             break;
         case 'logout':
+            registrarAuditoria('logout', 'seguridad', ['usuario' => $_SESSION['login']['correo'] ?? '']);
             session_destroy();
             $data = [
                 'ope' => 'logout',
@@ -124,6 +154,9 @@ if ($appFolder === '' || (($segments[0] ?? '') === $appFolder)) {
                     break;
                 case 'backups':
                     require ROOT_VIEW . '/admin/backups/index.php';
+                    break;
+                case 'auditoria':
+                    require ROOT_VIEW . '/admin/auditoria/index.php';
                     break;
                 case 'productos':
                     require ROOT_VIEW . '/vendor/productos/index.php';

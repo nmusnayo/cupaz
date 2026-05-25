@@ -2,10 +2,12 @@
 require_once ROOT_DIR . '/model/PedidoModel.php';
 require_once ROOT_DIR . '/model/PagoModel.php';
 require_once ROOT_DIR . '/model/AdminQrPagoModel.php';
+require_once ROOT_DIR . '/model/EntregaQrModel.php';
 
 $pedidoModel = new PedidoModel();
 $pagoModel = new PagoModel();
 $adminQrModel = new AdminQrPagoModel();
+$entregaQrModel = new EntregaQrModel();
 $idCliente = (int)($_SESSION['login']['id_usuario'] ?? 0);
 $rolActual = strtoupper($_SESSION['login']['rol'] ?? '');
 $mensajeError = '';
@@ -74,6 +76,20 @@ function guardarEvidenciaRecepcionCliente($file)
     return 'uploads/evidencias/' . $fileName;
 }
 
+function extraerTokenQrCliente($payloadQr)
+{
+    $payloadQr = trim((string)$payloadQr);
+    if ($payloadQr === '') {
+        return '';
+    }
+    $partes = parse_url($payloadQr);
+    if (!empty($partes['query'])) {
+        parse_str($partes['query'], $query);
+        return trim((string)($query['token'] ?? ''));
+    }
+    return $payloadQr;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
     $idPedido = (int)($_POST['id_pedido'] ?? 0);
@@ -98,6 +114,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mensajeExito = 'Comprobante enviado correctamente. CUPAZ verificará el pago antes de habilitar el envío.';
         } else {
             $mensajeError = $resultado['ERROR'] ?? 'No se pudo registrar el pago.';
+        }
+    } elseif ($accion === 'confirmar_recepcion_qr') {
+        $payloadQr = trim($_POST['qr_payload_detectado'] ?? '');
+        $tokenQr = extraerTokenQrCliente($payloadQr);
+        $evidencia = guardarEvidenciaRecepcionCliente($_FILES['evidencia_recepcion'] ?? []);
+        if ($evidencia === null) {
+            $resultado = ['ESTADO' => false, 'ERROR' => 'Debes subir una imagen valida del QR de entrega.'];
+        } elseif ($tokenQr === '') {
+            $resultado = ['ESTADO' => false, 'ERROR' => 'No se pudo leer el QR de la imagen cargada.'];
+        } else {
+            $entregaQr = $entregaQrModel->obtenerPorToken($tokenQr)['DATA'][0] ?? null;
+            if ($entregaQr === null || (int)($entregaQr['id_pedido'] ?? 0) !== $idPedido) {
+                $resultado = ['ESTADO' => false, 'ERROR' => 'El QR cargado no corresponde a este pedido.'];
+            } else {
+                $resultado = $entregaQrModel->confirmarEntregaPorToken($tokenQr, $idCliente, $evidencia, $payloadQr);
+            }
+        }
+        if (!empty($resultado['ESTADO'])) {
+            $mensajeExito = 'Recepcion confirmada con QR. El pago retenido fue liberado al vendedor.';
+        } else {
+            $mensajeError = $resultado['ERROR'] ?? 'No se pudo confirmar la recepcion con QR.';
         }
     } elseif ($accion === 'confirmar_recepcion') {
         $evidencia = guardarEvidenciaRecepcionCliente($_FILES['evidencia_recepcion'] ?? []);
@@ -173,6 +210,11 @@ foreach ($pedidos as $pedido) {
                                     <?php
                                     $estado = strtoupper($pedido['estado'] ?? '');
                                     $claseEstado = in_array($estado, ['EN_DISPUTA', 'REEMBOLSADO', 'CANCELADO'], true) ? 'badge-danger-soft' : ($estado === 'COMPLETADO' ? 'badge-soft' : 'badge-warning-soft');
+                                    $tokenEntrega = trim($pedido['token_qr_entrega'] ?? '');
+                                    $estadoQrEntrega = strtoupper($pedido['estado_qr_entrega'] ?? '');
+                                    $puedeConfirmarQr = $rolActual !== 'ADMIN'
+                                        && in_array($estado, ['PAGO_RETENIDO', 'ENVIADO', 'ENTREGADO', 'COMPLETADO'], true)
+                                        && $estadoQrEntrega !== 'CONFIRMADO';
                                     $payloadQr = json_encode([
                                         'sistema' => 'CUPAZ',
                                         'pedido' => (int)$pedido['id_pedido'],
@@ -202,15 +244,18 @@ foreach ($pedidos as $pedido) {
                                                     data-qr='<?php echo htmlspecialchars($payloadQr, ENT_QUOTES); ?>'>
                                                     <i class="fas fa-qrcode mr-1"></i>Pagar
                                                 </button>
-                                            <?php elseif ($rolActual !== 'ADMIN' && in_array($estado, ['PAGO_RETENIDO', 'ENVIADO', 'ENTREGADO'], true)): ?>
-                                                <form method="post" enctype="multipart/form-data" style="display:inline-block;min-width:220px;">
-                                                    <input type="hidden" name="accion" value="confirmar_recepcion">
-                                                    <input type="hidden" name="id_pedido" value="<?php echo (int)$pedido['id_pedido']; ?>">
-                                                    <input type="file" name="evidencia_recepcion" class="form-control form-control-sm mb-1" accept="image/*,.pdf" required>
-                                                    <button type="submit" class="btn btn-sm btn-cupaz-outline">
-                                                        <i class="fas fa-check-circle mr-1"></i>Confirmar recepción
+                                            <?php elseif ($puedeConfirmarQr): ?>
+                                                <?php if ($tokenEntrega !== ''): ?>
+                                                    <button type="button" class="btn btn-sm btn-cupaz-primary btn-confirmar-entrega-qr"
+                                                        data-toggle="modal"
+                                                        data-target="#modalConfirmarEntregaQr"
+                                                        data-pedido="<?php echo (int)$pedido['id_pedido']; ?>"
+                                                        data-token="<?php echo htmlspecialchars($tokenEntrega, ENT_QUOTES); ?>">
+                                                        <i class="fas fa-qrcode mr-1"></i>Confirmar con QR
                                                     </button>
-                                                </form>
+                                                <?php else: ?>
+                                                    <span class="helper-text">El vendedor aun no genero el QR de entrega.</span>
+                                                <?php endif; ?>
                                             <?php else: ?>
                                                 <span class="helper-text">Sin acciones pendientes</span>
                                             <?php endif; ?>
@@ -256,6 +301,45 @@ foreach ($pedidos as $pedido) {
                     </div>
                 <?php endif; ?>
             </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalConfirmarEntregaQr" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="post" enctype="multipart/form-data">
+                <input type="hidden" name="accion" value="confirmar_recepcion_qr">
+                <input type="hidden" name="id_pedido" id="entregaQrPedidoId" value="">
+                <input type="hidden" name="qr_payload_detectado" id="entregaQrPayloadDetectado" value="">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirmar entrega con QR</h5>
+                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                </div>
+                <div class="modal-body">
+                    <div class="actions-bar">
+                        <div>
+                            <div class="metric-label">Pedido</div>
+                            <div id="entregaQrPedidoTexto" class="metric-value" style="font-size:22px;">#0</div>
+                        </div>
+                        <div>
+                            <div class="metric-label">Verificacion</div>
+                            <div id="entregaQrEstadoTexto" class="metric-value" style="font-size:18px;">Pendiente</div>
+                        </div>
+                    </div>
+                    <div class="form-group mt-3">
+                        <label>Foto del QR de entrega</label>
+                        <input type="file" name="evidencia_recepcion" id="entregaQrImagen" class="form-control" accept="image/*" required>
+                        <small id="entregaQrMensaje" class="form-text text-muted">Sube una foto clara del QR incluido por el vendedor.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-cupaz-outline" data-dismiss="modal">Cerrar</button>
+                    <button type="submit" id="btnEnviarEntregaQr" class="btn btn-cupaz-primary" disabled>
+                        <i class="fas fa-check-circle mr-1"></i>Confirmar entrega
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -309,6 +393,7 @@ foreach ($pedidos as $pedido) {
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.btn-pagar-qr').forEach(function (button) {
@@ -323,6 +408,99 @@ document.addEventListener('DOMContentLoaded', function () {
             document.getElementById('qrProductosTexto').textContent = productos;
         });
     });
+
+    const inputQr = document.getElementById('entregaQrImagen');
+    const payloadQr = document.getElementById('entregaQrPayloadDetectado');
+    const mensajeQr = document.getElementById('entregaQrMensaje');
+    const estadoQr = document.getElementById('entregaQrEstadoTexto');
+    const botonQr = document.getElementById('btnEnviarEntregaQr');
+    let tokenEntregaEsperado = '';
+
+    function tokenDesdePayloadQr(payload) {
+        payload = (payload || '').trim();
+        try {
+            const url = new URL(payload);
+            return (url.searchParams.get('token') || '').trim();
+        } catch (e) {
+            return payload;
+        }
+    }
+
+    function limpiarQr(mensaje, clase) {
+        if (payloadQr) payloadQr.value = '';
+        if (botonQr) botonQr.disabled = true;
+        if (mensajeQr) {
+            mensajeQr.textContent = mensaje;
+            mensajeQr.className = 'form-text ' + clase;
+        }
+        if (estadoQr) estadoQr.textContent = 'Pendiente';
+    }
+
+    document.querySelectorAll('.btn-confirmar-entrega-qr').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const pedido = this.getAttribute('data-pedido') || '0';
+            tokenEntregaEsperado = this.getAttribute('data-token') || '';
+            document.getElementById('entregaQrPedidoId').value = pedido;
+            document.getElementById('entregaQrPedidoTexto').textContent = '#' + pedido;
+            if (inputQr) inputQr.value = '';
+            limpiarQr('Sube una foto clara del QR incluido por el vendedor.', 'text-muted');
+        });
+    });
+
+    if (inputQr) {
+        inputQr.addEventListener('change', function () {
+            const file = inputQr.files && inputQr.files[0] ? inputQr.files[0] : null;
+            limpiarQr('Leyendo el QR de la imagen...', 'text-muted');
+
+            if (!file) {
+                limpiarQr('Sube una foto clara del QR incluido por el vendedor.', 'text-muted');
+                return;
+            }
+            if (!window.jsQR) {
+                limpiarQr('No se cargo el lector de QR. Revisa tu conexion e intenta nuevamente.', 'text-danger');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function (event) {
+                const img = new Image();
+                img.onload = function () {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    ctx.drawImage(img, 0, 0);
+
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const lectura = jsQR(imageData.data, imageData.width, imageData.height);
+                    if (!lectura || !lectura.data) {
+                        limpiarQr('No pude leer un QR en esa imagen. Sube una foto mas clara.', 'text-danger');
+                        return;
+                    }
+
+                    const tokenLeido = tokenDesdePayloadQr(lectura.data);
+                    if (!tokenEntregaEsperado || tokenLeido !== tokenEntregaEsperado) {
+                        limpiarQr('El QR leido no corresponde al QR generado por el vendedor para este envio.', 'text-danger');
+                        return;
+                    }
+
+                    payloadQr.value = lectura.data;
+                    botonQr.disabled = false;
+                    estadoQr.textContent = 'QR verificado';
+                    mensajeQr.textContent = 'QR verificado correctamente para este envio. Ya puedes confirmar la entrega.';
+                    mensajeQr.className = 'form-text text-success';
+                };
+                img.onerror = function () {
+                    limpiarQr('No se pudo procesar la imagen cargada.', 'text-danger');
+                };
+                img.src = event.target.result;
+            };
+            reader.onerror = function () {
+                limpiarQr('No se pudo leer el archivo cargado.', 'text-danger');
+            };
+            reader.readAsDataURL(file);
+        });
+    }
 });
 </script>
 <?php require ROOT_VIEW . '/template/footer.php'; ?>

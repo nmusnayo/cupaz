@@ -675,6 +675,12 @@
                                         </a>
                                     </li>
                                     <li class="nav-item">
+                                        <a href="<?php echo HTTP_BASE; ?>/admin/auditoria" class="nav-link">
+                                            <i class="fas fa-user-shield nav-icon"></i>
+                                            <p>Auditoria</p>
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
                                         <a href="<?php echo HTTP_BASE; ?>/client/pedidos" class="nav-link">
                                             <i class="fas fa-receipt nav-icon"></i>
                                             <p>Vista de cliente</p>
