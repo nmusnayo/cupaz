@@ -43,6 +43,18 @@ function guardarImagenProducto($file, $prefix)
     return 'uploads/productos/' . $fileName;
 }
 
+function urlImagenProductoListado($ruta)
+{
+    $ruta = trim((string)$ruta);
+    if ($ruta === '') {
+        return '';
+    }
+    if (preg_match('#^https?://#i', $ruta)) {
+        return $ruta;
+    }
+    return HTTP_BASE . '/' . ltrim($ruta, '/');
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? 'crear';
 
@@ -105,6 +117,56 @@ $productos = $rolActual === 'ADMIN'
     : ($productoModel->listarPorVendedor($idVendedor)['DATA'] ?? []);
 ?>
 <?php require ROOT_VIEW . '/template/header.php'; ?>
+<style>
+.product-list-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 220px;
+}
+.product-list-thumb {
+    width: 58px;
+    height: 58px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex: 0 0 58px;
+    border: 1px solid #d7e4e5;
+    background: #f4f6f9;
+}
+.product-list-placeholder {
+    width: 58px;
+    height: 58px;
+    border-radius: 8px;
+    flex: 0 0 58px;
+    border: 1px solid #d7e4e5;
+    background: #f4f6f9;
+    color: #aab6bf;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+}
+.product-list-name {
+    min-width: 0;
+}
+.product-list-name strong {
+    display: block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.product-description-cell {
+    max-width: 260px;
+}
+.product-description-preview {
+    display: block;
+    color: #4a5568;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+</style>
 <div class="content-wrapper">
     <div class="content-header">
         <div class="container-fluid">
@@ -162,13 +224,37 @@ $productos = $rolActual === 'ADMIN'
                                     <?php foreach ($productos as $producto): ?>
                                         <tr>
                                             <td>
-                                                <strong><?php echo htmlspecialchars($producto['nombre']); ?></strong><br>
-                                                <span
-                                                    class="helper-text"><?php echo !empty($producto['imagen_principal']) ? 'Con imagen principal' : 'Sin imagen principal'; ?></span>
+                                                <?php $imagenProducto = urlImagenProductoListado($producto['imagen_principal'] ?? ''); ?>
+                                                <div class="product-list-item">
+                                                    <?php if ($imagenProducto !== ''): ?>
+                                                        <img class="product-list-thumb" src="<?php echo htmlspecialchars($imagenProducto, ENT_QUOTES); ?>" alt="<?php echo htmlspecialchars($producto['nombre']); ?>">
+                                                    <?php else: ?>
+                                                        <div class="product-list-placeholder"><i class="fas fa-image"></i></div>
+                                                    <?php endif; ?>
+                                                    <div class="product-list-name">
+                                                        <strong><?php echo htmlspecialchars($producto['nombre']); ?></strong>
+                                                        <span class="helper-text"><?php echo $imagenProducto !== '' ? 'Imagen principal' : 'Sin imagen'; ?></span>
+                                                    </div>
+                                                </div>
                                             </td>
                                             <td><?php echo htmlspecialchars(trim(($producto['categoria'] ?? '') . ' / ' . ($producto['subcategoria'] ?? ''), ' /')); ?>
                                             </td>
-                                            <td><?php echo htmlspecialchars($producto['descripcion']); ?>
+                                            <td class="product-description-cell">
+                                                <?php
+                                                $descripcionProducto = trim((string)($producto['descripcion'] ?? ''));
+                                                $descripcionPreview = $descripcionProducto !== '' ? $descripcionProducto : 'Sin descripcion';
+                                                if (function_exists('mb_strlen') && mb_strlen($descripcionPreview, 'UTF-8') > 70) {
+                                                    $descripcionPreview = mb_substr($descripcionPreview, 0, 70, 'UTF-8') . '...';
+                                                } elseif (strlen($descripcionPreview) > 70) {
+                                                    $descripcionPreview = substr($descripcionPreview, 0, 70) . '...';
+                                                }
+                                                ?>
+                                                <span class="product-description-preview"><?php echo htmlspecialchars($descripcionPreview); ?></span>
+                                                <button type="button" class="btn btn-sm btn-cupaz-outline mt-1"
+                                                    data-toggle="modal"
+                                                    data-target="#modalDescripcionProducto<?php echo (int) $producto['id_producto']; ?>">
+                                                    <i class="fas fa-align-left mr-1"></i>Ver descripcion
+                                                </button>
                                             </td>
                                             <?php if ($rolActual === 'ADMIN'): ?><td><?php echo htmlspecialchars($producto['vendedor'] ?? ''); ?></td><?php endif; ?>
                                             <td><strong>Bs
@@ -317,6 +403,23 @@ $productos = $rolActual === 'ADMIN'
                         <button type="submit" class="btn btn-danger-soft">Eliminar</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="modalDescripcionProducto<?php echo (int) $producto['id_producto']; ?>" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Descripcion de <?php echo htmlspecialchars($producto['nombre']); ?></h5>
+                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                </div>
+                <div class="modal-body">
+                    <p style="white-space:pre-wrap;line-height:1.7;margin-bottom:0;"><?php echo htmlspecialchars(trim((string)($producto['descripcion'] ?? '')) !== '' ? $producto['descripcion'] : 'Sin descripcion registrada.'); ?></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-cupaz-outline" data-dismiss="modal">Cerrar</button>
+                </div>
             </div>
         </div>
     </div>
